@@ -71,11 +71,36 @@ abstract class HasMany extends Object implements IRelationshipCollection
 	}
 
 
+	public function loadValue(array $values)
+	{
+	}
+
+
+	public function saveValue(array $values): array
+	{
+		return $values;
+	}
+
+
 	public function setRawValue($value)
 	{
-		if ($value !== null) { // null passed when property is initialized
-			$this->set($value);
+		$this->set($value);
+	}
+
+
+	/**
+	 * Returns primary values of enitities in relationship.
+	 * @return mixed[]
+	 */
+	public function getRawValue()
+	{
+		$primaryValues = [];
+		foreach ($this->getIterator() as $entity) {
+			if ($entity->isPersisted()) {
+				$primaryValues[] = $entity->getValue('id');
+			}
 		}
+		return $primaryValues;
 	}
 
 
@@ -205,22 +230,6 @@ abstract class HasMany extends Object implements IRelationshipCollection
 	public function isModified(): bool
 	{
 		return $this->isModified;
-	}
-
-
-	/**
-	 * Returns primary values of enitities in relationship.
-	 * @return mixed[]
-	 */
-	public function getRawValue()
-	{
-		$primaryValues = [];
-		foreach ($this->getIterator() as $entity) {
-			if ($entity->isPersisted()) {
-				$primaryValues[] = $entity->getValue('id');
-			}
-		}
-		return $primaryValues;
 	}
 
 

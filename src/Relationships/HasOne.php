@@ -11,7 +11,6 @@ namespace Nextras\Orm\Relationships;
 use Nette\Object;
 use Nextras\Orm\Collection\ICollection;
 use Nextras\Orm\Entity\IEntity;
-use Nextras\Orm\Entity\IEntityHasPreloadContainer;
 use Nextras\Orm\Entity\Reflection\PropertyMetadata;
 use Nextras\Orm\InvalidArgumentException;
 use Nextras\Orm\Mapper\IRelationshipMapper;
@@ -59,6 +58,20 @@ abstract class HasOne extends Object implements IRelationshipContainer
 	public function setParent(IEntity $parent)
 	{
 		$this->parent = $parent;
+	}
+
+
+	public function loadValue(array $values)
+	{
+		$this->setRawValue($values[$this->metadata->name]);
+	}
+
+
+	public function saveValue(array $values): array
+	{
+		// raw value getter is overriden in OneHasOne
+		$values[$this->metadata->name] = $this->getRawValue();
+		return $values;
 	}
 
 
