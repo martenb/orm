@@ -15,6 +15,7 @@ use Tester\TestCase;
 
 class Helper
 {
+	const SECTION_MSSQL = 'mssql';
 	const SECTION_MYSQL = 'mysql';
 	const SECTION_PGSQL = 'pgsql';
 	const SECTION_ARRAY = 'array';
@@ -33,20 +34,17 @@ class Helper
 
 	public static function getSection()
 	{
-		if (self::isRunByRunner()) {
-			if (self::isRunForListingMethods()) {
-				return self::SECTION_ARRAY;
-			}
-
+		if (self::isRunByRunner() && !self::isRunForListingMethods()) {
 			$tmp = preg_filter('#--dataprovider=(.*)#Ai', '$1', $_SERVER['argv']);
 			list($query) = explode('|', (string) reset($tmp), 2);
-			return $query ?: self::SECTION_ARRAY;
-
-		} else {
-			$sections = parse_ini_file(__DIR__ . '/../sections.ini', true);
-			$sections = array_keys($sections);
-			return $sections[0];
+			if ($query) {
+				return $query;
+			}
 		}
+
+		$sections = parse_ini_file(__DIR__ . '/../sections.ini', true);
+		$sections = array_keys($sections);
+		return $sections[0];
 	}
 
 

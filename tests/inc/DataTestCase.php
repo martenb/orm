@@ -15,6 +15,7 @@ class DataTestCase extends TestCase
 		switch ($this->section) {
 			case Helper::SECTION_MYSQL:
 			case Helper::SECTION_PGSQL:
+			case Helper::SECTION_MSSQL:
 				$connection = $this->container->getByType(Connection::class);
 				FileImporter::executeFile($connection, __DIR__ . "/../db/$this->section-data.sql");
 				break;
