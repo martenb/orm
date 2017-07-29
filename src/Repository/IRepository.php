@@ -103,6 +103,12 @@ interface IRepository
 
 
 	/**
+	 * @return object
+	 */
+	public function getCustomFunction(string $name);
+
+
+	/**
 	 * @return mixed
 	 */
 	public function persist(IEntity $entity, bool $withCascade = true);

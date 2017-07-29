@@ -20,6 +20,7 @@ use Nextras\Orm\InvalidStateException;
 use Nextras\Orm\Mapper\IMapper;
 use Nextras\Orm\Model\IModel;
 use Nextras\Orm\Model\MetadataStorage;
+use Nextras\Orm\NotImplementedException;
 use ReflectionClass;
 
 
@@ -188,6 +189,13 @@ abstract class Repository implements IRepository
 	public function findById($ids): ICollection
 	{
 		return call_user_func_array([$this->findAll(), 'findBy'], [['id' => $ids]]);
+	}
+
+
+	/** @inheritdoc */
+	public function getCustomFunction(string $name)
+	{
+		throw new NotImplementedException('Override ' . get_class($this) . '::getCustomFunction() to return a custom function implementation.');
 	}
 
 
