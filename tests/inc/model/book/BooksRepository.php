@@ -31,4 +31,16 @@ final class BooksRepository extends Repository
 	{
 		return $this->findBy(['this->tags->name' => $name]);
 	}
+
+
+	public function getCustomFunction(string $name)
+	{
+		if ($name === LikeFunction::class) {
+			return new LikeFunction();
+		} elseif ($name === LikeNestedFunction::class) {
+			return new LikeNestedFunction();
+		} else {
+			return parent::getCustomFunction($name);
+		}
+	}
 }

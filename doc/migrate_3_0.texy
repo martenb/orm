@@ -1,0 +1,2 @@
+- Entity: all datetime property types has to be replaced with \DateTimeImmutable type, we suggest to match the case
+- removed value operator `!`, use equivalent `!=` operator, e.g. replace `findBy(['name!' => 'Jon'])` with `findBy(['name!=' => 'Jon'])`

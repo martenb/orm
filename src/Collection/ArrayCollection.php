@@ -222,7 +222,7 @@ class ArrayCollection implements ICollection
 		if ($this->collectionFilter || $this->collectionSorter || $this->collectionLimit) {
 			$data = $this->data;
 			foreach ($this->collectionFilter as $filter) {
-				$data = array_filter($data, $filter);
+				$data = $filter($data);
 			}
 
 			if ($this->collectionSorter) {

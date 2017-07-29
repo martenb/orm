@@ -15,178 +15,70 @@ use Nextras\Orm\Collection\ICollection;
 use Nextras\Orm\Entity\IEntity;
 use Nextras\Orm\Entity\Reflection\EntityMetadata;
 use Nextras\Orm\Entity\Reflection\PropertyMetadata;
-use Nextras\Orm\InvalidArgumentException;
+use Nextras\Orm\Entity\Reflection\PropertyRelationshipMetadata;
 use Nextras\Orm\InvalidStateException;
-use Nextras\Orm\NotSupportedException;
-use Nextras\Orm\Relationships\IRelationshipCollection;
+use Nextras\Orm\Mapper\IMapper;
+use Nextras\Orm\Mapper\Memory\CustomFunctions\IArrayFilterFunction;
+use Nextras\Orm\Mapper\Memory\CustomFunctions\IArrayNestedFilterFunction;
+use Nextras\Orm\Repository\Functions\ConjunctionOperatorFunction;
+use Nextras\Orm\Repository\Functions\DisjunctionOperatorFunctions;
+use Nextras\Orm\Repository\Functions\ValueOperatorFunction;
 use Nextras\Orm\Repository\IRepository;
 
 
 class ArrayCollectionHelper
 {
-
 	/** @var IRepository */
 	private $repository;
+
+	/** @var IMapper */
+	private $mapper;
 
 
 	public function __construct(IRepository $repository)
 	{
 		$this->repository = $repository;
+		$this->mapper = $repository->getMapper();
 	}
 
 
-	public function createFilter(array $conditions): Closure
+	public function createFilter(array $expr): Closure
 	{
-		if (!isset($conditions[0])) {
-			$operator = ICollection::AND;
+		$operator = isset($expr[0]) ? array_shift($expr) : ICollection::AND;
+		$customFunction = $this->getFunction($operator);
+
+		if ($customFunction instanceof IArrayNestedFilterFunction) {
+			return function (array $entities) use ($customFunction, $expr) {
+				/** @var IEntity[] $entities */
+				return array_filter($entities, function (IEntity $entity) use ($customFunction, $expr) {
+					return $customFunction->processArrayFilter($this, $entity, $expr);
+				});
+			};
+
+		} elseif ($customFunction instanceof IArrayFilterFunction) {
+			return function (array $entities) use ($customFunction, $expr) {
+				/** @var IEntity[] $entities */
+				return $customFunction->processArrayFilter($this, $entities, $expr);
+			};
+
 		} else {
-			$operator = array_shift($conditions);
-		}
-
-		$callbacks = [];
-		foreach ($conditions as $expression => $value) {
-			if (is_int($expression)) {
-				$callbacks[] = $this->createFilter($value);
-			} else {
-				$callbacks[] = $this->createExpressionFilter($expression, $value);
-			}
-		}
-
-		if ($operator === ICollection::AND) {
-			return function ($value) use ($callbacks) {
-				foreach ($callbacks as $callback) {
-					if (!$callback($value)) {
-						return false;
-					}
-				}
-				return true;
-			};
-		} elseif ($operator === ICollection::OR) {
-			return function ($value) use ($callbacks) {
-				foreach ($callbacks as $callback) {
-					if ($callback($value)) {
-						return true;
-					}
-				}
-				return false;
-			};
-		} else {
-			throw new NotSupportedException("Operator $operator is not supported");
+			throw new InvalidStateException("Custom function $operator has to implement IQueryBuilderFilterFunction or IQueryBuilderNestedFilterFunction interface.");
 		}
 	}
 
 
-	/**
-	 * @param  mixed  $value
-	 */
-	public function createExpressionFilter(string $condition, $value): Closure
+	public function createNestedFilterCallback(array $expr)
 	{
-		list($chain, $operator, $sourceEntity) = ConditionParserHelper::parseCondition($condition);
-		$sourceEntityMeta = $this->repository->getEntityMetadata($sourceEntity);
+		$operator = isset($expr[0]) ? array_shift($expr) : ICollection::AND;
+		$customFunction = $this->getFunction($operator);
 
-		if ($value instanceof IEntity) {
-			$value = $value->getValue('id');
+		if (!$customFunction instanceof IArrayNestedFilterFunction) {
+			throw new InvalidStateException("Custom function $operator has to implement IQueryBuilderNestedFilterFunction interface.");
 		}
 
-		$comparator = $this->createComparator($operator, is_array($value));
-		return $this->createFilterEvaluator($chain, $comparator, $sourceEntityMeta, $value);
-	}
-
-
-	private function createComparator(string $operator, bool $isArray): Closure
-	{
-		if ($operator === ConditionParserHelper::OPERATOR_EQUAL) {
-			if ($isArray) {
-				return function ($property, $value) {
-					return in_array($property, $value, true);
-				};
-			} else {
-				return function ($property, $value) {
-					return $property === $value;
-				};
-			}
-		} elseif ($operator === ConditionParserHelper::OPERATOR_NOT_EQUAL) {
-			if ($isArray) {
-				return function ($property, $value) {
-					return !in_array($property, $value, true);
-				};
-			} else {
-				return function ($property, $value) {
-					return $property !== $value;
-				};
-			}
-		} elseif ($operator === ConditionParserHelper::OPERATOR_GREATER) {
-			return function ($property, $value) {
-				return $property > $value;
-			};
-		} elseif ($operator === ConditionParserHelper::OPERATOR_EQUAL_OR_GREATER) {
-			return function ($property, $value) {
-				return $property >= $value;
-			};
-		} elseif ($operator === ConditionParserHelper::OPERATOR_SMALLER) {
-			return function ($property, $value) {
-				return $property < $value;
-			};
-		} elseif ($operator === ConditionParserHelper::OPERATOR_EQUAL_OR_SMALLER) {
-			return function ($property, $value) {
-				return $property <= $value;
-			};
-		} else {
-			throw new InvalidArgumentException();
-		}
-	}
-
-
-	protected function createFilterEvaluator(array $chainSource, Closure $predicate, EntityMetadata $sourceEntityMetaSource, $targetValue): Closure
-	{
-		$evaluator = function (
-			IEntity $element,
-			array $chain = null,
-			EntityMetadata $sourceEntityMeta = null
-		) use (
-			& $evaluator,
-			$predicate,
-			$chainSource,
-			$sourceEntityMetaSource,
-			$targetValue
-		): bool {
-			if (!$chain) {
-				$sourceEntityMeta = $sourceEntityMetaSource;
-				$chain = $chainSource;
-			}
-
-			$column = array_shift($chain);
-			$propertyMeta = $sourceEntityMeta->getProperty($column); // check if property exists
-			$value = $element->hasValue($column) ? $element->getValue($column) : null;
-
-			if (!$chain) {
-				if ($column === 'id' && count($sourceEntityMeta->getPrimaryKey()) > 1 && !isset($targetValue[0][0])) {
-					$targetValue = [$targetValue];
-				}
-				return $predicate(
-					$this->normalizeValue($value, $propertyMeta),
-					$this->normalizeValue($targetValue, $propertyMeta)
-				);
-			}
-
-			$targetEntityMeta = $propertyMeta->relationship->entityMetadata;
-			if ($value === null) {
-				return false;
-
-			} elseif ($value instanceof IRelationshipCollection) {
-				foreach ($value as $node) {
-					if ($evaluator($node, $chain, $targetEntityMeta)) {
-						return true;
-					}
-				}
-
-				return false;
-			} else {
-				return $evaluator($value, $chain, $targetEntityMeta);
-			}
+		return function (IEntity $entity) use ($customFunction, $expr) {
+			return $customFunction->processArrayFilter($this, $entity, $expr);
 		};
-
-		return $evaluator;
 	}
 
 
@@ -194,15 +86,15 @@ class ArrayCollectionHelper
 	{
 		$columns = [];
 		foreach ($conditions as $pair) {
-			list($column, , $sourceEntity) = ConditionParserHelper::parseCondition($pair[0]);
+			list($column, $sourceEntity) = ConditionParserHelper::parsePropertyExpr($pair[0]);
 			$sourceEntityMeta = $this->repository->getEntityMetadata($sourceEntity);
 			$columns[] = [$column, $pair[1], $sourceEntityMeta];
 		}
 
 		return function ($a, $b) use ($columns) {
 			foreach ($columns as $pair) {
-				$_a = $this->getter($a, $pair[0], $pair[2]);
-				$_b = $this->getter($b, $pair[0], $pair[2]);
+				$_a = $this->getValueByTokens($a, $pair[0], $pair[2])->value;
+				$_b = $this->getValueByTokens($b, $pair[0], $pair[2])->value;
 				$direction = $pair[1] === ICollection::ASC ? 1 : -1;
 
 				if ($_a === null || $_b === null) {
@@ -230,26 +122,15 @@ class ArrayCollectionHelper
 	}
 
 
-	public function getter(IEntity $element, array $chain, EntityMetadata $sourceEntityMeta)
+	public function getValue(IEntity $entity, string $expr, & $targetValue = null): ValueReference
 	{
-		$column = array_shift($chain);
-		$propertyMeta = $sourceEntityMeta->getProperty($column); // check if property exists
-		$value = $element->hasValue($column) ? $element->getValue($column) : null;
-
-		if ($value instanceof IRelationshipCollection) {
-			throw new InvalidStateException('You can not sort by hasMany relationship.');
-		}
-
-		if (!$chain) {
-			return $this->normalizeValue($value, $propertyMeta);
-		} else {
-			$targetEntityMeta = $propertyMeta->relationship->entityMetadata;
-			return $value ? $this->getter($value, $chain, $targetEntityMeta) : null;
-		}
+		list($tokens, $sourceEntityClassName) = ConditionParserHelper::parsePropertyExpr($expr);
+		$sourceEntityMeta = $this->repository->getEntityMetadata($sourceEntityClassName);
+		return $this->getValueByTokens($entity, $tokens, $sourceEntityMeta);
 	}
 
 
-	private function normalizeValue($value, PropertyMetadata $propertyMetadata)
+	public function normalizeValue($value, PropertyMetadata $propertyMetadata)
 	{
 		if ($value instanceof IEntity) {
 			return $value->hasValue('id') ? $value->getValue('id') : null;
@@ -262,5 +143,61 @@ class ArrayCollectionHelper
 		}
 
 		return $value;
+	}
+
+
+	private function getValueByTokens(IEntity $entity, array $tokens, EntityMetadata $sourceEntityMeta): ValueReference
+	{
+		$isFromHasManyResult = false;
+		$values = [];
+		$stack = [[$entity, $tokens, $sourceEntityMeta]];
+
+		do {
+			/** @var IEntity $value */
+			/** @var string[] $tokens */
+			/** @var EntityMetadata $entityMeta */
+			list ($value, $tokens, $entityMeta) = array_shift($stack);
+
+			do {
+				$propertyName = array_shift($tokens);
+				$propertyMeta = $entityMeta->getProperty($propertyName); // check if property exists
+				$value = $value->hasValue($propertyName) ? $value->getValue($propertyName) : null;
+
+				if ($propertyMeta->relationship) {
+					$entityMeta = $propertyMeta->relationship->entityMetadata;
+
+					if (
+						$propertyMeta->relationship->type === PropertyRelationshipMetadata::MANY_HAS_MANY
+						|| $propertyMeta->relationship->type === PropertyRelationshipMetadata::ONE_HAS_MANY
+					) {
+						$isFromHasManyResult = true;
+						foreach ($value as $subEntity) {
+							$stack[] = [$subEntity, $tokens, $entityMeta];
+						}
+						continue 2;
+					}
+				}
+
+			} while (count($tokens) > 0 && $value !== null);
+
+			$values[] = $this->normalizeValue($value, $propertyMeta);
+		} while (!empty($stack));
+
+		return new ValueReference($isFromHasManyResult, $isFromHasManyResult ? $values : $values[0], $propertyMeta);
+	}
+
+
+	// todo: optimize
+	private function getFunction(string $operator)
+	{
+		if ($operator === ValueOperatorFunction::class) {
+			return new ValueOperatorFunction();
+		} elseif ($operator === ConjunctionOperatorFunction::class) {
+			return new ConjunctionOperatorFunction();
+		} elseif ($operator === DisjunctionOperatorFunctions::class) {
+			return new DisjunctionOperatorFunctions();
+		} else {
+			return $this->repository->getCustomFunction($operator);
+		}
 	}
 }
